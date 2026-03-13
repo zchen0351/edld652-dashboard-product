@@ -143,7 +143,7 @@ install.packages(c(
     rmarkdown::render("dashboard_product_v2.Rmd")
     ```
 
-4.  The rendered dashboard will open as `dashboard_product_v2.html` in your browser.
+4.  Open the rendered `dashboard_product_v2.html` in your browser to view the dashboard.
 
 ------------------------------------------------------------------------
 
