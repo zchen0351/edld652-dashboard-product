@@ -1,0 +1,2182 @@
+---
+title: "Human Memory"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+---
+
+```{r load, include=FALSE}
+# Load packages and dataset
+library(flexdashboard)
+library(tidyverse)
+library(viridis)
+library(RColorBrewer)
+library(colorspace)
+library(ggrepel)
+library(colorblindr)
+library(gghighlight)
+library(plotly)
+library(ggplot2)
+library(scales)
+library(lme4)
+library(emmeans)
+library(dplyr)
+library(tidyr)
+library(readr)
+library(afex)
+library(paletteer)
+library(readxl)
+library(colorblindr)
+library(gt)
+
+library(showtext)
+font_add_google("IBM Plex Sans", "ibm")
+showtext_auto()
+
+# Load data 
+raw_df <- read.csv("combined_data.csv")
+```
+
+```{r css, echo=FALSE}
+# Customize dashboard theme
+htmltools::tags$style("
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600;700&display=swap');
+
+  body, .navbar, .nav-tabs, .tab-content, .sidebar {
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
+  .navbar-inverse {
+    background-color: #1F3A6E;
+    border-color: #1F3A6E;
+  }
+  .navbar-inverse .navbar-brand {
+    color: #FFFFFF;
+    font-size: 22px;
+    font-weight: 600;
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
+  .navbar-inverse .navbar-nav > li > a {
+    color: #FFFFFF;
+    font-size: 17px;
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
+  .navbar-inverse .navbar-nav > .active > a {
+    background-color: #2E5499;
+    color: #FFFFFF;
+    font-weight: 700;
+  }
+  .navbar-inverse .navbar-nav > li > a:hover {
+    background-color: #2E5499;
+    color: #FFFFFF;
+  }
+")
+```
+
+# Sidebar {.sidebar}
+
+### Overview
+
+**Authors:** Isha Chhabra, America Romero, Ziyuan Chen
+
+This dashboard visualizes recognition memory data from the **Multimodal Memory Dataset**, collected at the Hutchinson Lab of Cognitive Neuroscience (University of Oregon). We collected up to 15 sessions per participant (n=3). 
+
+In each session, participants learned and recalled image-word pairs. By manipulating how participants learn (encode) and recall image-word pairs, **we are interested in how memory performance is affected by confidence levels, encoding and recall conditions, sleep quality, and voice type**.
+
+Each page presents the final visualization, key takeaway, descriptive statistics, and earlier draft versions.
+
+Our intended audience is the general memory researchers.
+
+# Accuracy vs. Confidence
+
+## Column {data-width="650"}
+
+### Final Version {data-height="760"}
+
+```{r fig.width=11, fig.height=6.6}
+# ── Data preparation ───────────────────────────────────────────────────────────
+# Recode raw numeric columns to labelled factors for plotting.
+# - enCon: encoding condition (1 = Single, 2 = Repeats, 3 = Triplets)
+# - reCon: recall condition (1 = Within Session, 2 = Across Sessions)
+# - resp:  response value; 1 & 4 are high confidence responses; 2 & 3 are low confidence responses
+conf_df <- raw_df %>%
+  mutate(
+    enCon_label = factor(enCon, levels = c(1, 2, 3),
+                         labels = c("Single", "Repeats", "Triplets")),
+    reCon_label = factor(reCon, levels = c(1, 2),
+                         labels = c("Within Session", "Across Sessions")),
+    confidence  = factor(
+      ifelse(resp %in% c(1, 4), "High Confidence", "Low Confidence"),
+      levels = c("High Confidence", "Low Confidence")
+    ),
+    subjId = factor(subjId)
+  )
+
+# ── Subject-level session means ────────────────────────────────────────────────
+# Average accuracy per subject × session × confidence
+sess_subj <- conf_df %>%
+  group_by(subjId, session, confidence) %>%
+  summarise(accuracy = mean(trial_accuracy), .groups = "drop")
+
+# ── Group-level session means ──────────────────────────────────────────────────
+# Collapse subject means to get the overall mean ± SE per session × confidence.
+# SE is computed across the 3 subjects for the ribbon.
+sess_mean <- sess_subj %>%
+  group_by(session, confidence) %>%
+  summarise(
+    mean_acc = mean(accuracy),
+    se_acc   = sd(accuracy) / sqrt(n()),
+    .groups  = "drop"
+  )
+
+# ── Colour and linetype palettes ───────────────────────────────────────────────
+# Colorblind-friendly palatte Okabe-Ito used throughout the dashboard.
+conf_pal <- c("High Confidence" = "#D55E00", "Low Confidence" = "#E69F00")
+conf_lty <- c("High Confidence" = "solid",   "Low Confidence" = "dashed")
+subj_pal <- c("3" = "#009E73", "4" = "#0072B2", "5" = "#C2185B")
+
+# ── Plot ───────────────────────────────────────────────────────────────────────
+pline <- ggplot() +
+  
+  # Layer 1: SE ribbon around the group mean for each confidence level.
+  geom_ribbon(
+    data  = sess_mean,
+    aes(x = session, ymin = mean_acc - se_acc,
+        ymax = mean_acc + se_acc,
+        fill = confidence, group = confidence),
+    alpha = 0.12 # so individual lines remain readable
+  ) +
+
+  # Layer 2: Spaghetti lines — one per subject × confidence combination.
+  # Color is participants; linetype is confidence levels.
+  geom_line(
+    data  = sess_subj,
+    aes(x        = session,
+        y        = accuracy,
+        colour   = factor(subjId),
+        linetype = confidence,
+        group    = interaction(subjId, confidence)),
+    linewidth = 0.9, alpha = 0.45 # keep individual traces from overwhelming the group means
+  ) +
+
+  # Layer 3: Bold group mean lines — drawn over spaghetti for visibility.
+  geom_line(
+    data  = sess_mean,
+    aes(x        = session,
+        y        = mean_acc,
+        colour   = confidence,
+        linetype = confidence,
+        group    = confidence),
+    linewidth = 2.8, alpha = 0.95 # makes the group trend obvious
+  ) +
+
+  # Layer 4: Points on the group mean line.
+  geom_point(
+    data   = sess_mean,
+    aes(x = session, y = mean_acc, fill = confidence, group = confidence),
+    shape  = 21, size = 3.5, 
+    colour = "white", stroke = 1.8 # White "halo" around points
+  ) +
+  
+  # Confidence-levels are graded orange colors so represent high vs. low comparison
+  scale_colour_manual(
+    values = c(
+      "3" = "#009E73", "4" = "#0072B2", "5" = "#C2185B",
+      "High Confidence" = "#D55E00",
+      "Low Confidence"  = "#E69F00"
+    ),
+    breaks = c("High Confidence", "Low Confidence", "3", "4", "5"),
+    labels = c(
+      "High Confidence" = "High Confidence",
+      "Low Confidence"  = "Low Confidence",
+      "3" = "Participant 1", "4" = "Participant 2", "5" = "Participant 3"
+    ),
+    name = NULL
+  ) +
+  scale_fill_manual(
+    values = conf_pal,
+    guide  = "none"  # fill already conveyed by cololr; suppress duplicate legend
+  ) +
+  scale_linetype_manual(
+    values = conf_lty,
+    guide  = "none"   # linetype already shown via color legend so suppress too
+  ) +
+  # x-axis: sessions 1–15
+  scale_x_continuous(breaks = 1:15, expand = expansion(add = 0.3)) + # small expansion so points at session 1 aren't clipped
+  
+  # y-axis: lower limit = 0.3 to accommodate the ~33% minimum accuracy
+  scale_y_continuous(
+    limits = c(0.3, 1.04),   # was c(0.45, 1.04) which clipped the first point out
+    breaks = c(0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+    labels = percent_format()
+  ) +
+
+  labs(
+    title = "High Confidence Resonponses Are Consistently More\nAccurate Than Low Confidence Across Sessions",
+    x     = "Session Number",
+    y     = "Accuracy"
+  ) +
+  
+  # ── Theme ──────────────────────────────────────────────────────────────────
+  # White background with horizontal grid lines (vertical grid lines make plot messy)
+  theme_minimal(base_size = 14, base_family = "ibm") +
+  theme(
+    plot.background    = element_rect(fill = "white", colour = NA),
+    panel.background   = element_rect(fill = "white", colour = NA),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.y = element_line(color = "gray85", linewidth = 0.5),
+    axis.line          = element_blank(),
+    axis.ticks         = element_blank(),
+    plot.title         = element_text(hjust = 0, size = 22, face = "bold", margin = margin(b = 10)),
+    legend.position    = "bottom",
+    legend.text        = element_text(size = 12),
+    legend.key.width   = unit(1.8, "cm"),
+    axis.title.x       = element_text(size = 16, colour = "gray30", face = "plain"),
+    axis.title.y       = element_text(size = 17, colour = "gray30", vjust = 0.5),
+    axis.text          = element_text(size = 13, colour = "gray30"),
+    plot.margin        = margin(t = 10, r = 15, b = 30, l = 10)
+  )
+pline
+```
+
+### Key Takeaway {data-height="240"}
+
+```{r, echo=FALSE}
+htmltools::tags$div(
+  style = "background:#F0F4FF; border-left: 4px solid #1F3A6E; padding: 12px 16px; border-radius: 4px; font-family: 'IBM Plex Sans', sans-serif; font-size: 15px; color: #1C1C1E; margin-top: 12px;",
+  htmltools::tags$strong("Each line shows recognition memory accuracy per session, comparing average accuracy for high- vs. low- confidence responses (bold lines) along individual participant trajectories (dashed lines). High-confidence responses remained consistently near ceiling (~95-100%) across all 15 sessions, while low-confidence responses were substantially lower (~70-75%), suggesting confidence ratings reliably track memory strength.")
+)
+```
+
+## Column {.tabset data-width="350"}
+
+### About
+
+**Research Question:** Is there a difference in memory accuracy based on how confident participants are about their responses?
+
+ 
+
+**Hypothesis:** Memory performance will be increased for high confidence responses.
+
+ 
+
+**Overall:** Confidence and accuracy are strongly positively related. High-confidence trials outperformed low-confidence trials by \~23% points across 3,234 total trials. The larger SD in low-confidence trials indicates genuine uncertainty — participants are sometimes right, but far less consistently. The two confidence levels tend to co-vary across sessions, suggesting shared session-level factors like fatigue or task difficulty.
+
+ 
+
+```{r}
+# ── Descriptive statistics table ───────────────────────────────────────────────
+# Summarise at the session level (not trial level) to get meaningful Min/Max,
+# because trial-level accuracy is binary (0/1) where Min = 0% and Max = 100% always 
+desc_sess <- sess_subj %>%
+  group_by(confidence) %>%
+  summarise(
+    Sessions = n_distinct(session),
+    Mean     = mean(accuracy), # session means across 3 subjects
+    SD       = sd(accuracy),
+    Min      = min(accuracy),
+    Max      = max(accuracy),
+    .groups  = "drop"
+  )
+
+desc_sess %>%
+  gt() %>%
+  tab_header(
+    title    = "Memory Accuracy by Confidence Level",
+    subtitle = "Each row = confidence level (across sessions and subjects)"
+  ) %>%
+  cols_label(
+    confidence = "Confidence",
+    Sessions   = "N (sessions)",
+    Mean       = "Mean Accuracy",
+    SD         = "SD",
+    Min        = "Min",
+    Max        = "Max"
+  ) %>%
+  fmt_percent(columns = c(Mean, SD, Min, Max), decimals = 1) %>%
+  # Footnote explaining Min/Max
+  tab_footnote(
+    footnote  = "Min/Max reflect subject-level session accuracy means.",
+    locations = cells_column_labels(columns = c(Min, Max))
+  ) %>%
+  tab_style(
+    style     = cell_text(weight = "bold"),
+    locations = cells_column_labels()
+  ) %>%
+  opt_row_striping() %>%
+  opt_table_font(font = google_font("IBM Plex Sans")) # match dashboard font
+```
+
+### Old Version 1
+
+```{r}
+# ── Deprecated: Old Version 1 ──────────────────────────────────────────────────
+# Differences from final: uses Set1 palette (not CVD-safe), no SE ribbon,
+# no group mean overlay — just raw per-subject lines colored by participant.
+
+# ── Shared constants ──────────────────
+PAPER <- "#FAFAF8"
+INK   <- "#1C1C1E"
+MID   <- "#888888"
+LIGHT <- "#E8E8E8"
+
+# Encoding conditions (teal / salmon-orange / slate-blue – matching figure)
+enc_pal <- c(
+  "Single"   = "#6BBFA0",
+  "Repeats"  = "#F0956A",
+  "Triplets" = "#8FA8C8"
+)
+
+# Confidence  (blue / orange)
+conf_pal <- c(
+  "High Confidence" = "#2D7DD2",
+  "Low Confidence"  = "#E07B4F"
+)
+
+# Subject lines  (3 distinct, muted)
+subj_pal <- c("3" = "#A07CC5", "4" = "#5B9E8C", "5" = "#C47A5C")
+
+# Minimal custom theme used across old versions
+theme_mem <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) %+replace%
+    theme(
+      plot.background    = element_rect(fill = PAPER, colour = NA),
+      panel.background   = element_rect(fill = PAPER, colour = NA),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor   = element_blank(),
+      panel.grid.major.y = element_line(colour = LIGHT, linewidth = 0.5),
+      axis.ticks         = element_blank(),
+      axis.text          = element_text(colour = MID,  size = 10),
+      axis.title         = element_text(colour = MID,  size = 11),
+      plot.title         = element_text(face = "bold", colour = INK,
+                                        size = 14, hjust = 0),
+      plot.subtitle      = element_text(colour = MID, size = 10,
+                                        hjust = 0, face = "italic",
+                                        margin = margin(b = 10)),
+      plot.caption       = element_text(colour = "#BBBBBB", size = 8,
+                                        hjust = 0, margin = margin(t = 8)),
+      legend.background  = element_rect(fill = PAPER, colour = NA),
+      legend.key         = element_rect(fill = PAPER, colour = NA)
+    )
+}
+
+# Recode confidence using resp values (same logic as final version)
+confidence_data <- conf_df %>%
+  mutate(
+    confidence_level = case_when(
+      resp %in% c(1, 4) ~ "High",
+      resp %in% c(2, 3) ~ "Low"
+    ),
+    subject_label = factor(subjId, levels = c(3, 4, 5), labels = c("1", "2", "3"))
+  )
+
+# Per-session mean accuracy per subject × confidence
+confidence_summary <- confidence_data %>%
+  group_by(session, confidence_level, subjId, subject_label) %>%
+  summarise(mean_accuracy = mean(trial_accuracy, na.rm = TRUE), .groups = "drop")
+
+# Simple line plot: one line per subject × confidence, no group mean
+ggplot(confidence_summary, aes(x = session, y = mean_accuracy, 
+                                      color = subject_label, 
+                                      linetype = confidence_level,
+                                      group = interaction(subjId, confidence_level))) +
+  geom_line(size = 1.2) +
+  geom_point(size = 3.5) +
+  labs(
+    title = "Accuracy Trends Across Sessions by Confidence Level",
+    x = "Session Number",
+    y = "Mean Accuracy",
+    color = "Subject",
+    linetype = "Confidence Level"
+  ) +
+  scale_x_continuous(breaks = 1:15) +
+  scale_y_continuous(
+    limits = c(0.45, 1.05), 
+    breaks = seq(0.5, 1.0, by = 0.1),
+    labels = percent_format(accuracy = 1)
+  ) +
+  scale_color_brewer(palette = "Set1") +
+  scale_linetype_manual(values = c("High" = "solid", "Low" = "dashed")) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.box = "horizontal",
+    legend.margin = margin(t = 10),
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text = element_text(size = 10),
+    legend.title = element_text(size = 11, face = "bold"),
+    legend.text = element_text(size = 10),
+    plot.margin = margin(10, 10, 10, 10)
+  )
+```
+
+### Old Version 2
+
+```{r}
+# ── Deprecated: Old Version 2 ──────────────────────────────────────────────────
+# Uses facet_wrap() to split High/Low confidence into side-by-side panels. 
+ggplot() +
+
+  # SE ribbon per confidence panel
+  geom_ribbon(
+    data  = sess_mean,
+    aes(x = session, ymin = mean_acc - se_acc,
+        ymax = mean_acc + se_acc, fill = confidence),
+    alpha = 0.15
+  ) +
+
+  # Individual participant lines within each facet (colored by subjId)
+  geom_line(
+    data      = sess_subj,
+    aes(x = session, y = accuracy, colour = subjId, group = subjId),
+    linewidth = 0.9, alpha = 0.50
+  ) +
+
+  # Group mean line per facet
+  geom_line(
+    data      = sess_mean,
+    aes(x = session, y = mean_acc, colour = confidence),
+    linewidth = 2.0, alpha = 0.9
+  ) +
+
+  # Mean points
+  geom_point(
+    data   = sess_mean,
+    aes(x = session, y = mean_acc, fill = confidence),
+    shape  = 21, size = 3.5, colour = "white", stroke = 1.8
+  ) +
+  
+  # Split into two panels, one per confidence level
+  facet_wrap(~ confidence, ncol = 2) +
+
+  scale_colour_manual(
+    values = c(
+      "3" = "#A07CC5", "4" = "#5B9E8C", "5" = "#C47A5C",
+      "High Confidence" = "#2D7DD2",
+      "Low Confidence"  = "#E07B4F"
+    ),
+    breaks = c("3", "4", "5"),
+    name   = "Participant",
+    labels = c("3" = "1", "4" = "2", "5" = "3")
+  ) +
+  scale_fill_manual(
+    values = c(
+      "High Confidence" = "#2D7DD2",
+      "Low Confidence"  = "#E07B4F"
+    ),
+    guide = "none"
+  ) +
+  scale_x_continuous(breaks = 1:15, expand = expansion(add = 0.3)) +
+  scale_y_continuous(
+    limits = c(0.48, 1.05),
+    breaks = c(0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+    labels = percent_format()
+  ) +
+
+  labs(
+    title    = "Memory Accuracy by Confidence Level Across Sessions",
+    subtitle = "Bold line = group mean +/- 1 SE ribbon  |  Thin lines = individual participants",
+    x        = "Session Number",
+    y        = "Accuracy",
+    caption  = paste(
+      "High confidence = sure responses (resp 1 or 4).",
+      "Low confidence = maybe responses (resp 2 or 3)."
+    )
+  ) +
+
+  theme_mem() +
+  theme(
+    strip.text       = element_text(face = "bold", size = 11, colour = INK),
+    strip.background = element_rect(fill = PAPER, colour = NA),
+    panel.spacing    = unit(1.5, "lines"),
+    legend.position  = "bottom",
+    legend.title     = element_text(face = "bold", size = 9),
+    legend.text      = element_text(size = 9)
+  )
+```
+
+### Old Version 3
+
+```{r}
+# ── Deprecated: Old Version 3 ──────────────────────────────────────────────────
+# Title wasn't informative
+ggplot() +
+
+  # SE ribbon — one per confidence level
+  geom_ribbon(
+    data  = sess_mean,
+    aes(x = session, ymin = mean_acc - se_acc,
+        ymax = mean_acc + se_acc,
+        fill = confidence, group = confidence),
+    alpha = 0.12
+  ) +
+
+  # Individual spaghetti lines — colored by participant,
+  # linetype by confidence so both dimensions are visible
+  geom_line(
+    data  = sess_subj,
+    aes(x        = session,
+        y        = accuracy,
+        colour   = factor(subjId),
+        linetype = confidence,
+        group    = interaction(subjId, confidence)),
+    linewidth = 0.9, alpha = 0.45
+  ) +
+
+  # Bold group mean lines
+  geom_line(
+    data  = sess_mean,
+    aes(x        = session,
+        y        = mean_acc,
+        colour   = confidence,
+        linetype = confidence,
+        group    = confidence),
+    linewidth = 2.8, alpha = 0.95
+  ) +
+
+  # Mean points
+  geom_point(
+    data   = sess_mean,
+    aes(x = session, y = mean_acc, fill = confidence, group = confidence),
+    shape  = 21, size = 3.5, colour = "white", stroke = 1.8
+  ) +
+
+  scale_colour_manual(
+    values = c(
+      "3" = "#009E73", "4" = "#0072B2", "5" = "#CC79A7",
+      "High Confidence" = "#D55E00",
+      "Low Confidence"  = "#E69F00"
+    ),
+    breaks = c("High Confidence", "Low Confidence", "3", "4", "5"),
+    labels = c(
+      "High Confidence" = "High Confidence",
+      "Low Confidence"  = "Low Confidence",
+      "3" = "Participant 1", "4" = "Participant 2", "5" = "Participant 3"
+    ),
+    name = NULL
+  ) +
+  scale_fill_manual(
+    values = conf_pal,
+    guide  = "none"
+  ) +
+  scale_linetype_manual(
+    values = conf_lty,
+    guide  = "none"   # linetype already shown via color legend
+  ) +
+  scale_x_continuous(breaks = 1:15, expand = expansion(add = 0.3)) +
+  scale_y_continuous(
+    limits = c(0.3, 1.04),   # was c(0.45, 1.04)
+    breaks = c(0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+    labels = percent_format()
+  ) +
+
+  labs(
+    title = "Memory Accuracy by Confidence\nLevel Across Sessions",
+    x     = "Session Number",
+    y     = "Accuracy"
+  ) +
+
+theme_minimal(base_size = 14, base_family = "ibm") +
+theme(
+    plot.background    = element_rect(fill = "white", colour = NA),
+    panel.background   = element_rect(fill = "white", colour = NA),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.y = element_line(color = "gray85", linewidth = 0.5),
+    axis.line          = element_blank(),
+    axis.ticks         = element_blank(),
+    plot.title         = element_text(hjust = 0, size = 22, face = "bold", margin = margin(b = 10)),
+    legend.position    = "bottom",
+    legend.text        = element_text(size = 8),
+    legend.key.width   = unit(1.8, "cm"),
+    axis.title.x       = element_text(size = 16, colour = "gray30", face = "plain"),
+    axis.title.y       = element_text(size = 17, colour = "gray30", vjust = 0.5),
+    axis.text          = element_text(size = 13, colour = "gray30"),
+    plot.margin        = margin(t = 10, r = 15, b = 30, l = 10)
+  ) +
+  guides(colour = guide_legend(nrow = 2, byrow = TRUE))  # wrap to 2 rows
+```
+
+# Accuracy vs. Memory Conditions
+
+## Column {data-width="650"}
+
+### Final Version {data-height="760"}
+
+```{r fig.width=10, fig.height=6}
+# ── Shared constants ───────────────────────────────────
+PAPER <- "#FAFAF8"
+INK   <- "#1C1C1E"
+MID   <- "#888888"
+LIGHT <- "#E8E8E8"
+
+# CVD-safe palette (Okabe-Ito)
+enc_pal <- c(
+  "Single"   = "#999999",
+  "Repeats"  = "#D55E00",
+  "Triplets" = "#56B4E9"
+)
+
+# Distinct shapes per participant 
+subj_shapes <- c("3" = 15, "4" = 17, "5" = 16)  # square, triangle, circle
+
+# ── Mixed model ────────────────────────────────────────────────────────────────
+# Fit a linear mixed-effects model with encoding × recall as fixed effects
+# and random intercepts per subject. 
+mod <- lmer(
+  trial_accuracy ~ enCon_label * reCon_label + (1 | subjId),
+  data = conf_df, REML = TRUE
+)
+
+# ── Estimated Marginal Means ───────────────────────────────────────────────────
+# emm_options: raise the pbkrtest/lmerTest limits to suppress the warning
+# that fires when the design matrix exceeds the default threshold (3000 rows).
+# This does not change any estimates — it only silences the size warning.
+emm_options(pbkrtest.limit = 3500, lmerTest.limit = 3500)
+emm_raw <- emmeans(mod, ~ enCon_label * reCon_label)
+
+# Extract 95% CIs and rename columns for clarity 
+emm <- confint(emm_raw) %>%
+  as.data.frame() %>%
+  rename(
+    enc      = enCon_label,
+    rec      = reCon_label,
+    estimate = emmean,
+    lower    = lower.CL,
+    upper    = upper.CL
+  ) %>%
+  mutate(
+    enc = factor(enc, levels = c("Single", "Repeats", "Triplets")),
+    rec = factor(rec, levels = c("Within Session", "Across Sessions")),
+    # x_group: one level per encoding × recall combination
+    x_group = factor(
+      interaction(rec, enc, sep = "__"),
+      levels = c(
+        "Within Session__Single",   "Within Session__Repeats",   "Within Session__Triplets",
+        "Across Sessions__Single",  "Across Sessions__Repeats",  "Across Sessions__Triplets"
+      )
+    )
+  )
+
+# ── Subject-level accuracy overlay ────────────────────────────────────────────
+# Raw subject means are plotted on top of the model estimates so readers can
+# see how tightly the model tracks the individual data. Factor levels for
+# x_group are taken directly from emm.
+conf_subj_acc <- conf_df %>%
+  group_by(subjId, enCon_label, reCon_label) %>%
+  summarise(accuracy = mean(trial_accuracy), .groups = "drop") %>%
+  rename(enc = enCon_label, rec = reCon_label) %>%
+  mutate(
+    enc     = factor(enc, levels = c("Single", "Repeats", "Triplets")),
+    rec     = factor(rec, levels = c("Within Session", "Across Sessions")),
+    x_group = factor(
+      interaction(rec, enc, sep = "__"),
+      levels = levels(emm$x_group)   # reuse levels from emm — single source of truth
+    )
+  )
+
+# x-axis tick labels: show encoding condition name only (recall condition is
+# communicated by the annotated groups and divider below in plot).
+x_labels <- c("Single", "Repeats", "Triplets", "Single", "Repeats", "Triplets")
+
+
+# ── Plot ───────────────────────────────────────────────────────────────────────
+ggplot() +
+
+  # Vertical divider between recall conditions (Within and Across)
+  annotate("segment",
+         x = 3.5, xend = 3.5, y = 0.48, yend = 1.02,  # was 1.05
+         colour = "#DEDEDE", linewidth = 1.2) +
+
+  # Group header annotations replace x-axis group labels for a cleaner look.
+  annotate("text", x = 2, y = 0.485, label = "Within Session",
+           hjust = 0.5, vjust = 1, size = 5, fontface = "plain", colour = INK) +
+  annotate("text", x = 5, y = 0.485, label = "Across Sessions",
+           hjust = 0.5, vjust = 1, size = 5, fontface = "plain", colour = INK) +
+
+  # Layer 1: 95% CI error bars from the mixed model
+  geom_errorbar(
+    data  = emm %>% mutate(upper = pmin(upper, 1.0)),
+    aes(x = x_group, ymin = lower, ymax = upper, colour = enc),
+    width = 0.25, linewidth = 1.1
+  ) +
+
+  # Layer 2: Individual participant points with fixed horizontal nudges.
+  # Each participant is given a distinct x-offset so they never overlap
+  # the CI line or each other. 
+  geom_point(
+    data     = conf_subj_acc %>% filter(subjId == "3"),
+    aes(x = x_group, y = accuracy, colour = enc, shape = subjId),
+    position = position_nudge(x = -0.22),
+    size = 4, alpha = 0.75, stroke = 0.8
+  ) +
+  geom_point(
+    data     = conf_subj_acc %>% filter(subjId == "4"),
+    aes(x = x_group, y = accuracy, colour = enc, shape = subjId),
+    position = position_nudge(x = 0.10),
+    size = 4, alpha = 0.75, stroke = 0.8
+  ) +
+  geom_point(
+    data     = conf_subj_acc %>% filter(subjId == "5"),
+    aes(x = x_group, y = accuracy, colour = enc, shape = subjId),
+    position = position_nudge(x = 0.22),
+    size = 4, alpha = 0.75, stroke = 0.8
+  ) +
+
+  # Layer 3: Model-estimated mean — large filled circle drawn last so it
+  # always sits on top of the CI bars and subject points.
+  geom_point(
+    data   = emm,
+    aes(x = x_group, y = estimate, fill = enc),
+    shape  = 21, size = 8, stroke = 2.8,
+    colour = "white"
+  ) +
+
+  scale_colour_manual(values = enc_pal, name = "Encoding Condition") +
+  scale_fill_manual(values   = enc_pal, guide = "none") +
+  scale_shape_manual(
+    values = subj_shapes,
+    name   = "Participant",
+    labels = c("3" = "1", "4" = "2", "5" = "3")
+  ) +
+  scale_x_discrete(labels = NULL) +  # labels suppressed; group headers used instead
+  scale_y_continuous(
+    limits = c(0.47, 1.02),
+    breaks = c(0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+    labels = percent_format()
+  ) +
+
+  labs(
+    title    = "Repeated Learning Preserves Memory Within Session\nbut Not Across Sessions",
+    x        = "Recall Condition",
+    y        = "Accuracy",
+    caption  = NULL
+  ) +
+
+  guides(
+    colour = guide_legend(order = 2,
+                          override.aes = list(shape = 16, size = 4, alpha = 1)),
+    shape  = guide_legend(order = 1,
+                          override.aes = list(colour = "grey40", size = 4, alpha = 1))
+  ) +
+theme_minimal(base_size = 14, base_family = "ibm") +
+theme(
+    plot.background    = element_rect(fill = "white", colour = NA),
+    panel.background   = element_rect(fill = "white", colour = NA),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.y = element_line(color = "gray85", linewidth = 0.5),
+    axis.line          = element_blank(),
+    axis.ticks         = element_blank(),
+    plot.title         = element_text(hjust = 0, size = 22, face = "bold", margin = margin(b = 10)),
+    legend.position    = "bottom",
+    legend.title       = element_text(face = "bold", size = 13, colour = "gray30"),
+    legend.text        = element_text(size = 12),
+    legend.spacing.x   = unit(0.5, "cm"),
+    axis.title.x       = element_text(size = 16, colour = "gray30", face = "plain"),
+    axis.title.y       = element_text(size = 17, colour = "gray30"),
+    axis.text          = element_text(size = 13, colour = "gray30"),
+    plot.margin        = margin(t = 10, r = 15, b = 30, l = 10),
+    plot.clip          = "off"
+  )
+```
+
+### Key Takeaway {data-height="240"}
+
+```{r, echo=FALSE}
+htmltools::tags$div(
+  style = "background:#F0F4FF; border-left: 4px solid #1F3A6E; padding: 10px 16px; border-radius: 4px; font-family: 'IBM Plex Sans', sans-serif; font-size: 15px; color: #1C1C1E; margin-top: 3px;",
+  htmltools::tags$strong("This shows recognition memory performance within the same encoding (learning) session vs. a later session, across three encoding conditions: single (shown once), repeats (shown 3 times), and triplets (repeatedly shown 3 times with two other pairs together). Within-session accuracy was high across all 3 conditions, suggesting that single exposure is enough for short-term recognition. Accuracy systematically dropped when tested later, showing that additional exposures were not enough to predict memory over longer delays.")
+)
+```
+
+## Column {.tabset data-width="350"}
+
+### About
+
+**Research Question:** How does memory change based on how participants learned and were tested? During each encoding session, image-word pairs were shown once (Single), repeatedly (Repeats), or repeatedly alongside two other pairs (Triplets). During testing, participants either recalled pairs right away (Within Session) or after a delay (Across Sessions).
+
+ 
+
+**Hypothesis:**  Seeing pairs more than once (Repeats and Triplets) will improve memory. Recalling right away will produce higher accuracy than recalling after a delay.
+
+ 
+
+**Overall:** Mixed-Effects Model was run. Accuracy was higher for within-session retrieval than across-session retrieval, and repeated exposure at encoding generally boosted accuracy. Retrieval context dominates over encoding condition. This suggests that time-dependent forgetting interacts with encoding strength in our sample.
+
+ 
+
+```{r}
+# ── Descriptive statistics table: Encoding × Recall ───────────────────────────
+# Trial counts are computed at the trial level (total N per condition).
+# Accuracy statistics are computed at the subject level to avoid the
+# 0%/100% Min/Max problem from binary trial-level data.
+conf_trial_counts <- conf_df %>%
+  group_by(enCon_label, reCon_label) %>%
+  summarise(Trials = n(), .groups = "drop")
+
+# Subject-level mean accuracy per encoding × recall cell
+conf_subj_means <- conf_df %>%
+  group_by(subjId, enCon_label, reCon_label) %>%
+  summarise(subj_acc = mean(trial_accuracy), .groups = "drop")
+
+# Summarise across subjects, then join trial counts for the N column
+desc_conf <- conf_subj_means %>%
+  group_by(enCon_label, reCon_label) %>%
+  summarise(
+    Mean = mean(subj_acc),
+    SD   = sd(subj_acc),
+    Min  = min(subj_acc),
+    Max  = max(subj_acc),
+    .groups = "drop"
+  ) %>%
+  left_join(conf_trial_counts, by = c("enCon_label", "reCon_label")) %>%
+  select(reCon_label, enCon_label, Trials, Mean, SD, Min, Max)
+
+# gt table with recall condition as row groups for visual hierarchy
+desc_conf %>%
+  gt(groupname_col = "reCon_label") %>%
+  tab_header(
+    title    = "Memory Accuracy by Encoding & Recall Condition",
+    subtitle = "Each row = one encoding condition, grouped by recall condition (across sessions and subjects)"
+  ) %>%
+  cols_label(
+    enCon_label = "Condition",
+    Trials      = "N (trials)",
+    Mean        = "Mean Accuracy",
+    SD          = "SD",
+    Min         = "Min",
+    Max         = "Max"
+  ) %>%
+  fmt_percent(columns = c(Mean, SD, Min, Max), decimals = 1) %>%
+  tab_footnote(
+    footnote  = "Min/Max reflect subject-level accuracy means.",
+    locations = cells_column_labels(columns = c(Min, Max))
+  ) %>%
+  tab_style(
+    style     = cell_text(weight = "bold"),
+    locations = cells_column_labels()
+  ) %>%
+  tab_style(
+    style     = cell_text(weight = "bold", color = "gray30"),
+    locations = cells_row_groups()
+  ) %>%
+  opt_row_striping() %>%
+  opt_table_font(font = google_font("IBM Plex Sans"))
+```
+
+### Old Version 1
+
+```{r}
+# ── Deprecated: Old Version 1 ──────────────────────────────────────────────────
+# Uses an interaction plot with within-subject error bars and paired t-tests per encoding condition.
+# Discarded becuase lmer handles the repeated-measures structure more appropriately.
+
+# Subject-level means per session type × encoding condition
+interaction_individual <- conf_df %>%
+  mutate(Session_Type = factor(reCon, levels = c(1, 2),
+                               labels = c("Within Session", "Across Sessions"))) %>%
+  group_by(subjId, Session_Type, enCon_label) %>%
+  summarise(mean_accuracy = mean(trial_accuracy, na.rm = TRUE), .groups = "drop") %>%
+  mutate(subject_label = factor(subjId, levels = c(3, 4, 5), labels = c("1", "2", "3")))
+
+# Calculate within-subject error bars for each Session_Type separately
+calculate_within_subject_ci <- function(data) {
+  # Calculate subject means across encoding conditions
+  subject_means <- data %>%
+    group_by(subjId) %>%
+    summarise(subj_mean = mean(mean_accuracy), .groups = "drop")
+  
+  # Calculate grand mean
+  grand_mean_overall <- mean(data$mean_accuracy)
+  
+  # Normalize data
+  normalized <- data %>%
+    left_join(subject_means, by = "subjId") %>%
+    mutate(normalized_accuracy = mean_accuracy - subj_mean + grand_mean_overall)
+  
+  # Calculate within-subject SE and CI
+  within_ci <- normalized %>%
+    group_by(enCon_label) %>%
+    summarise(
+      grand_mean = mean(mean_accuracy),
+      se_within = sd(normalized_accuracy) / sqrt(n()),
+      n = n(),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      correction = sqrt(n / (n - 1)),
+      se_corrected = se_within * correction,
+      ci_lower = grand_mean - qt(0.975, df = n - 1) * se_corrected,
+      ci_upper = grand_mean + qt(0.975, df = n - 1) * se_corrected
+    )
+  
+  return(within_ci)
+}
+
+# Calculate within-subject CIs for each session type
+within_session_ci <- interaction_individual %>%
+  filter(Session_Type == "Within Session") %>%
+  calculate_within_subject_ci() %>%
+  mutate(Session_Type = "Within Session")
+
+across_session_ci <- interaction_individual %>%
+  filter(Session_Type == "Across Sessions") %>%
+  calculate_within_subject_ci() %>%
+  mutate(Session_Type = "Across Sessions")
+
+interaction_within <- bind_rows(within_session_ci, across_session_ci) %>%
+  mutate(Session_Type = factor(Session_Type, levels = c("Within Session", "Across Sessions")))
+
+# ── Paired t-tests with Bonferroni correction ──────────────────────────────────
+# Test Within vs Across for each encoding condition separately, then adjust.
+single_data <- interaction_individual %>%
+  filter(enCon_label == "Single") %>%
+  select(subjId, Session_Type, mean_accuracy) %>%
+  pivot_wider(names_from = Session_Type, values_from = mean_accuracy)
+
+t_single <- t.test(single_data$`Within Session`, single_data$`Across Sessions`, paired = TRUE)
+
+# Test for Repeats
+repeats_data <- interaction_individual %>%
+  filter(enCon_label == "Repeats") %>%
+  select(subjId, Session_Type, mean_accuracy) %>%
+  pivot_wider(names_from = Session_Type, values_from = mean_accuracy)
+
+t_repeats <- t.test(repeats_data$`Within Session`, repeats_data$`Across Sessions`, paired = TRUE)
+
+# Test for Triplets
+triplets_data <- interaction_individual %>%
+  filter(enCon_label == "Triplets") %>%
+  select(subjId, Session_Type, mean_accuracy) %>%
+  pivot_wider(names_from = Session_Type, values_from = mean_accuracy)
+
+t_triplets <- t.test(triplets_data$`Within Session`, triplets_data$`Across Sessions`, paired = TRUE)
+
+# Apply Bonferroni correction
+p_vals <- c(t_single$p.value, t_repeats$p.value, t_triplets$p.value)
+p_vals_corrected <- p.adjust(p_vals, method = "bonferroni")
+
+# Prepare significance brackets
+sig_tests <- list(
+  list(condition = "Single", p_val = p_vals_corrected[1], y_offset = 0),
+  list(condition = "Repeats", p_val = p_vals_corrected[2], y_offset = 1),
+  list(condition = "Triplets", p_val = p_vals_corrected[3], y_offset = 2)
+)
+
+# Create the plot
+palette_colors <- RColorBrewer::brewer.pal(3, "Set2")
+custom_colors <- c("Single" = palette_colors[1], 
+                   "Repeats" = palette_colors[2], 
+                   "Triplets" = palette_colors[3])
+
+p_interaction <- ggplot() +
+  # Grand mean error bars
+  geom_errorbar(data = interaction_within,
+                aes(x = Session_Type, ymin = ci_lower, ymax = ci_upper,
+                    group = enCon_label, color = enCon_label),
+                width = 0.3, size = 0.8,
+                position = position_dodge(width = 0.4)) +
+  geom_point(data = interaction_within,
+             aes(x = Session_Type, y = grand_mean, color = enCon_label),
+             size = 6, shape = 18,
+             position = position_dodge(width = 0.4)) +
+  # Individual subject lines
+  geom_line(data = interaction_individual,
+            aes(x = Session_Type, y = mean_accuracy,
+                group = interaction(subjId, enCon_label), color = enCon_label),
+            size = 1, alpha = 0.6,
+            position = position_dodge(width = 0.4)) +
+  geom_point(data = interaction_individual,
+             aes(x = Session_Type, y = mean_accuracy,
+                 color = enCon_label, shape = subject_label),
+             size = 5, alpha = 1, stroke = 1.2,
+             position = position_dodge(width = 0.4)) +
+  scale_color_manual(values = custom_colors, name = "Encoding\nCondition") +
+  scale_shape_manual(values = c(16, 17, 15), name = "Subject") +
+  scale_y_continuous(limits = c(0.5, NA),
+                     labels = percent_format(accuracy = 1),
+                     breaks = seq(0.5, 1.0, 0.1),
+                     expand = expansion(mult = c(0, 0.15))) +
+  labs(
+    title = "Interaction: Encoding × Recall Condition",
+    x = "Recall Condition",
+    y = "Mean Accuracy"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "right",
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5, margin = margin(b = 20)),
+    axis.title = element_text(size = 13, face = "bold"),
+    axis.text = element_text(size = 11),
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11),
+    plot.margin = margin(t = 10, r = 15, b = 30, l = 10),
+    plot.clip = "off"
+  )
+
+# Add significance brackets for each encoding condition
+for (test in sig_tests) {
+  if (test$p_val < 0.05) {
+    stars <- ifelse(test$p_val < 0.001, "***",
+                    ifelse(test$p_val < 0.01, "**", "*"))
+    sig_label <- sprintf("%s, p = %.4f", stars, test$p_val)
+    
+    # Get the max y value for this encoding condition
+    condition_data <- interaction_within %>% filter(enCon_label == test$condition)
+    y_max <- max(condition_data$ci_upper)
+    bracket_y <- y_max + 0.02 + (test$y_offset * 0.04)
+    
+    # Determine x positions with dodge offset
+    dodge_offset <- c("Single" = -0.27, "Repeats" = 0, "Triplets" = 0.27)
+    x1 <- 1 + dodge_offset[test$condition]
+    x2 <- 2 + dodge_offset[test$condition]
+    
+    p_interaction <- p_interaction +
+      annotate("segment", x = x1, xend = x2, y = bracket_y, yend = bracket_y,
+               color = custom_colors[test$condition], size = 0.8) +
+      annotate("segment", x = x1, xend = x1, y = bracket_y - 0.008, yend = bracket_y,
+               color = custom_colors[test$condition], size = 0.8) +
+      annotate("segment", x = x2, xend = x2, y = bracket_y - 0.008, yend = bracket_y,
+               color = custom_colors[test$condition], size = 0.8) +
+      annotate("text", x = (x1 + x2) / 2, y = bracket_y + 0.012, label = sig_label,
+               size = 3.5, hjust = 0.5, color = custom_colors[test$condition])
+  }
+}
+p_interaction
+```
+
+### Old Version 2
+
+```{r fig.width=7.5, fig.height=5.5}
+# ── Deprecated: Old Version 2 ──────────────────────────────────────────────────
+# Boxplot approach: with n = 3 subjects per cell, each box has only 3 data 
+# points, making IQR-based whiskers uninformative.
+
+# Subject-level accuracy per encoding × recall cell
+subj_acc <- conf_df %>%
+  group_by(subjId, enCon_label, reCon_label) %>%
+  summarise(accuracy = mean(trial_accuracy), .groups = "drop") %>%
+  mutate(
+    enCon_label = factor(enCon_label, levels = c("Single", "Repeats", "Triplets")),
+    reCon_label = factor(reCon_label, levels = c("Within Session", "Across Sessions")),
+    subjId      = factor(subjId),
+    x_group     = interaction(reCon_label, enCon_label, sep = "\n")
+  ) %>%
+  mutate(x_group = factor(x_group, levels = c(
+    "Within Session\nSingle",   "Within Session\nRepeats",   "Within Session\nTriplets",
+    "Across Sessions\nSingle",  "Across Sessions\nRepeats",  "Across Sessions\nTriplets"
+  )))
+
+subj_shapes <- c("3" = 15, "4" = 17, "5" = 16)   # square, triangle, circle
+
+# X-axis tick labels: show only encoding name
+x_labels <- c("Single", "Repeats", "Triplets", "Single", "Repeats", "Triplets")
+
+ggplot(subj_acc,
+             aes(x      = x_group,
+                 y      = accuracy,
+                 fill   = enCon_label,
+                 colour = enCon_label)) +
+
+  # ── Vertical divider between Within and Across groups ─────
+  annotate("segment",
+           x = 3.5, xend = 3.5,
+           y = 0.50, yend = 1.04,
+           colour = "#DEDEDE", linewidth = 1.2) +
+
+  # ── Group labels above x-axis ─────────────────────────────
+  annotate("text", x = 2, y = 0.495,
+           label = "Within Session",
+           hjust = 0.5, vjust = 1, size = 4, fontface = "bold",
+           colour = INK) +
+  annotate("text", x = 5, y = 0.495,
+           label = "Across Sessions",
+           hjust = 0.5, vjust = 1, size = 4, fontface = "bold",
+           colour = INK) +
+
+  # boxes 
+  geom_boxplot(
+    colour        = "#2a2a2a",
+    width         = 0.6,
+    outlier.shape = NA,
+    linewidth     = 0.7,
+    alpha         = 0.42,
+    coef          = Inf
+  ) +
+
+  # individual subject points
+  geom_point(
+    aes(shape = subjId),
+    size        = 5,
+    stroke      = 0.7,
+    show.legend = TRUE
+  ) +
+
+  # scales
+  scale_fill_manual(values = enc_pal, name = "Encoding Condition") +
+  scale_colour_manual(values = enc_pal, guide = "none") +
+  scale_shape_manual(
+    values = subj_shapes,
+    name   = "Subject",
+    labels = c("3" = "1", "4" = "2", "5" = "3")
+  ) +
+  scale_x_discrete(labels = x_labels) +
+  scale_y_continuous(
+    limits = c(0.49, 1.04),
+    breaks = c(0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+    labels = scales::percent_format()
+  ) +
+
+  labs(
+    title   = "Accuracy Distribution Across Conditions",
+    x       = "Recall Condition",
+    y       = "Mean Accuracy",
+    caption = "Box = IQR of participant means  |  Line = median  |  Whiskers = min/max  |  Shapes = individual participants"
+  ) +
+
+  guides(
+    fill  = guide_legend(order = 2,
+                         override.aes = list(shape = NA, alpha = 0.6,
+                                             colour = "#2a2a2a")),
+    shape = guide_legend(order = 1,
+                         override.aes = list(colour = "grey40", size = 5))
+  ) +
+
+  theme_mem() +
+  theme(
+    legend.position    = "bottom",
+    legend.title       = element_text(face = "bold", size = 10, colour = INK),
+    legend.text        = element_text(size = 10),
+    legend.key.size    = unit(1.1, "lines"),
+    legend.spacing.x   = unit(0.5, "cm"),
+    axis.text.x        = element_text(size = 10, colour = MID),
+    panel.grid.major.x = element_blank(),
+    plot.margin = margin(t = 10, r = 15, b = 30, l = 10)
+  )
+```
+
+### Old Version 3
+
+```{r fig.width=7.5, fig.height=5.5}
+# ── Deprecated: Old Version 3 ──────────────────────────────────────────────────
+# Uses theme_mem() which was not visually appealing.
+
+# Subject-level accuracy — factor levels reuse emm$x_group as single source of truth
+subj_acc <- conf_df %>%
+  group_by(subjId, enCon_label, reCon_label) %>%
+  summarise(accuracy = mean(trial_accuracy), .groups = "drop") %>%
+  rename(enc = enCon_label, rec = reCon_label) %>%
+  mutate(
+    enc     = factor(enc, levels = c("Single", "Repeats", "Triplets")),
+    rec     = factor(rec, levels = c("Within Session", "Across Sessions")),
+    x_group = factor(
+      interaction(rec, enc, sep = "__"),
+      levels = levels(emm$x_group)   # reuse levels from emm — single source of truth
+    )
+  )
+
+ggplot() +
+
+  # Vertical divider between recall groups
+  annotate("segment",
+         x = 3.5, xend = 3.5, y = 0.48, yend = 1.02,
+         colour = "#DEDEDE", linewidth = 1.2) +
+
+  # Group header labels
+  annotate("text", x = 2, y = 0.485, label = "Within Session",
+           hjust = 0.5, vjust = 1, size = 4, fontface = "bold", colour = INK) +
+  annotate("text", x = 5, y = 0.485, label = "Across Sessions",
+           hjust = 0.5, vjust = 1, size = 4, fontface = "bold", colour = INK) +
+
+  # Layer 1: 95% CI error bars with caps on both ends.
+  # Upper CI capped at 1.0 so the top cap is always visible —
+  # without this, near-ceiling Within Session conditions produce
+  # model CIs above 100% that get clipped by the axis, making
+  # it look like only the bottom cap is shown.
+  geom_errorbar(
+    data  = emm %>% mutate(upper = pmin(upper, 1.0)),
+    aes(x = x_group, ymin = lower, ymax = upper, colour = enc),
+    width = 0.25, linewidth = 1.1
+  ) +
+
+  # Layer 2: Individual participant points — fixed per-participant offsets.
+  # All three participants get a distinct x offset so nobody sits on the
+  # CI line or stacks on another point. Offsets are deterministic (not random)
+  # so the plot is fully reproducible without a seed.
+  #   Participant 1 (subjId 3): -0.22 (left)
+  #   Participant 2 (subjId 4): +0.10 (right of centre — off the CI line)
+  #   Participant 3 (subjId 5): +0.22 (right)
+  geom_point(
+    data     = subj_acc %>% filter(subjId == "3"),
+    aes(x = x_group, y = accuracy, colour = enc, shape = subjId),
+    position = position_nudge(x = -0.22),
+    size = 4, alpha = 0.75, stroke = 0.8
+  ) +
+  geom_point(
+    data     = subj_acc %>% filter(subjId == "4"),
+    aes(x = x_group, y = accuracy, colour = enc, shape = subjId),
+    position = position_nudge(x = 0.10),
+    size = 4, alpha = 0.75, stroke = 0.8
+  ) +
+  geom_point(
+    data     = subj_acc %>% filter(subjId == "5"),
+    aes(x = x_group, y = accuracy, colour = enc, shape = subjId),
+    position = position_nudge(x = 0.22),
+    size = 4, alpha = 0.75, stroke = 0.8
+  ) +
+
+  # Layer 3: Model-estimated mean (drawn last — always on top)
+  geom_point(
+    data   = emm,
+    aes(x = x_group, y = estimate, fill = enc),
+    shape  = 21, size = 8, stroke = 2.8,
+    colour = "white"
+  ) +
+
+  scale_colour_manual(values = enc_pal, name = "Encoding Condition") +
+  scale_fill_manual(values   = enc_pal, guide = "none") +
+  scale_shape_manual(
+    values = subj_shapes,
+    name   = "Participant",
+    labels = c("3" = "1", "4" = "2", "5" = "3")
+  ) +
+  scale_x_discrete(labels = x_labels) +
+  scale_y_continuous(
+    limits = c(0.47, 1.02),
+    breaks = c(0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+    labels = percent_format()
+  ) +
+
+  labs(
+    title    = "Memory Accuracy Across Conditions",
+    x        = "Recall Condition",
+    y        = "Accuracy",
+    caption  = NULL
+  ) +
+
+  guides(
+    colour = guide_legend(order = 2,
+                          override.aes = list(shape = 16, size = 4, alpha = 1)),
+    shape  = guide_legend(order = 1,
+                          override.aes = list(colour = "grey40", size = 4, alpha = 1))
+  ) +
+
+  theme_mem() +
+  theme(
+    legend.position  = "bottom",
+    legend.title     = element_text(face = "bold", size = 10, colour = INK),
+    legend.text      = element_text(size = 10),
+    legend.spacing.x = unit(0.5, "cm")
+  )
+```
+
+### Old Version 4
+
+```{r fig.width=7.5, fig.height=5.5}
+# ── Deprecated: Old Version 4 ──────────────────────────────────────────────────
+# Title wasn't informative of finding
+
+ggplot() +
+
+  # Vertical divider between recall groups
+  annotate("segment",
+         x = 3.5, xend = 3.5, y = 0.48, yend = 1.02,  # was 1.05
+         colour = "#DEDEDE", linewidth = 1.2) +
+
+  # Group header labels
+  annotate("text", x = 2, y = 0.485, label = "Within Session",
+           hjust = 0.5, vjust = 1, size = 5, fontface = "plain", colour = INK) +
+  annotate("text", x = 5, y = 0.485, label = "Across Sessions",
+           hjust = 0.5, vjust = 1, size = 5, fontface = "plain", colour = INK) +
+
+  # Layer 1: 95% CI error bars with caps on both ends.
+  # Upper CI capped at 1.0 so the top cap is always visible —
+  # without this, near-ceiling Within Session conditions produce
+  # model CIs above 100% that get clipped by the axis, making
+  # it look like only the bottom cap is shown.
+  geom_errorbar(
+    data  = emm %>% mutate(upper = pmin(upper, 1.0)),
+    aes(x = x_group, ymin = lower, ymax = upper, colour = enc),
+    width = 0.25, linewidth = 1.1
+  ) +
+
+  geom_point(
+    data     = conf_subj_acc %>% filter(subjId == "3"),
+    aes(x = x_group, y = accuracy, colour = enc, shape = subjId),
+    position = position_nudge(x = -0.22),
+    size = 4, alpha = 0.75, stroke = 0.8
+  ) +
+  geom_point(
+    data     = conf_subj_acc %>% filter(subjId == "4"),
+    aes(x = x_group, y = accuracy, colour = enc, shape = subjId),
+    position = position_nudge(x = 0.10),
+    size = 4, alpha = 0.75, stroke = 0.8
+  ) +
+  geom_point(
+    data     = conf_subj_acc %>% filter(subjId == "5"),
+    aes(x = x_group, y = accuracy, colour = enc, shape = subjId),
+    position = position_nudge(x = 0.22),
+    size = 4, alpha = 0.75, stroke = 0.8
+  ) +
+
+  # Layer 3: Model-estimated mean (drawn last — always on top)
+  geom_point(
+    data   = emm,
+    aes(x = x_group, y = estimate, fill = enc),
+    shape  = 21, size = 8, stroke = 2.8,
+    colour = "white"
+  ) +
+
+  scale_colour_manual(values = enc_pal, name = "Encoding Condition") +
+  scale_fill_manual(values   = enc_pal, guide = "none") +
+  scale_shape_manual(
+    values = subj_shapes,
+    name   = "Participant",
+    labels = c("3" = "1", "4" = "2", "5" = "3")
+  ) +
+  scale_x_discrete(labels = NULL) +
+  scale_y_continuous(
+    limits = c(0.47, 1.02),
+    breaks = c(0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+    labels = percent_format()
+  ) +
+
+  labs(
+    title    = "Memory Accuracy Across Conditions",
+    x        = "Recall Condition",
+    y        = "Accuracy",
+    caption  = NULL
+  ) +
+
+  guides(
+    colour = guide_legend(order = 2,
+                          override.aes = list(shape = 16, size = 4, alpha = 1)),
+    shape  = guide_legend(order = 1,
+                          override.aes = list(colour = "grey40", size = 4, alpha = 1))
+  ) +
+theme_minimal(base_size = 14, base_family = "ibm") +
+theme(
+    plot.background    = element_rect(fill = "white", colour = NA),
+    panel.background   = element_rect(fill = "white", colour = NA),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.y = element_line(color = "gray85", linewidth = 0.5),
+    axis.line          = element_blank(),
+    axis.ticks         = element_blank(),
+    plot.title         = element_text(hjust = 0, size = 22, face = "bold", margin = margin(b = 10)),
+    legend.position    = "bottom",
+    legend.title       = element_text(face = "bold", size = 11, colour = "gray30"),
+    legend.text        = element_text(size = 9),
+    legend.spacing.x   = unit(0.5, "cm"),
+    axis.title.x       = element_text(size = 16, colour = "gray30", face = "plain"),
+    axis.title.y       = element_text(size = 17, colour = "gray30"),
+    axis.text          = element_text(size = 13, colour = "gray30"),
+    plot.clip          = "off"
+  )
+```
+
+# Accuracy vs. Sleep Quality
+
+## Column {data-width="650"}
+
+### Final Version {data-height="760"}
+
+```{r}
+# ── Data loading and type coercion ─────────────────────────────────────────────
+# subjId and session coerced to factors so they join correctly with survey data.
+raw_df$subjId <- as.factor(raw_df$subjId)
+raw_df$session <- as.factor(raw_df$session)
+
+# Survey data contains subjective sleep quality ratings (1–5 scale)
+survey <- read_excel("Survey.xlsx")
+survey$subjId <- as.factor(survey$subjId)
+survey$session <- as.factor(survey$session)
+
+# ── Per-session accuracy ───────────────────────────────────────────────────────
+# Collapse trial-level data to one accuracy value per subject × session.
+accuracy <- raw_df %>%
+  group_by(subjId, session) %>%
+  summarise(
+    accuracy = mean(trial_accuracy, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Left join: keep all accuracy rows; append sleep rating where available
+survey_accuracy <- left_join(accuracy, survey, by = c("subjId", "session"))
+```
+
+```{r fig.width=10, fig.height=6}
+# define participant colors
+subj_colors <- c("3" = "#009E73", "4" = "#0072B2", "5" = "#C2185B")
+
+# create jittered x positions per participant
+survey_accuracy_plot <- survey_accuracy %>%
+  mutate(sleep_jitter = case_when(
+    subjId == 3 ~ sleep - 0.15,
+    subjId == 4 ~ sleep + 0.15,
+    subjId == 5 ~ sleep + 0.00
+  ))
+
+ggplot(survey_accuracy_plot, aes(x = sleep_jitter, y = accuracy)) +
+  
+  # points - color and shape by participant
+  geom_point(aes(shape = factor(subjId), color = factor(subjId)),
+             size = 3, alpha = 0.5) +
+  
+  # per participant average line with SE in subject color
+  geom_smooth(inherit.aes = FALSE,
+              data = survey_accuracy,
+              aes(x = sleep, y = accuracy, 
+                  color = factor(subjId), 
+                  fill = factor(subjId),
+                  group = factor(subjId)),
+              method = "lm", se = FALSE,
+              linewidth = 0.5, alpha = 0.15) +
+  
+  # bold overall group average line
+  geom_smooth(inherit.aes = FALSE,
+              aes(x = sleep, y = accuracy),
+              data = survey_accuracy,
+              method = "lm", se = TRUE,
+              color = "gray20", fill = "gray80",
+              linewidth = 1.8, alpha = 0.3) +
+  
+  scale_color_manual(
+    values = subj_colors,
+    labels = c("Participant 1", "Participant 2", "Participant 3"),
+    name = "Participant"
+  ) +
+  scale_fill_manual(
+    values = subj_colors,
+    guide = "none"  # hide fill from legend
+  ) +
+  scale_shape_manual(
+    values = c("3" = 15,   # square
+               "4" = 17,   # triangle
+               "5" = 16),  # circle
+    labels = c("Participant 1", "Participant 2", "Participant 3"),
+    name = "Participant"
+  ) +
+  scale_x_continuous(breaks = 1:5, limits = c(1, 5.5),
+                     labels = c("1", "2", "3", "4", "5")) +
+  scale_y_continuous(
+    limits = c(0.7, 1),
+    labels = scales::percent_format(accuracy = 1)
+  ) +
+  labs(
+    title = "Improved Sleep Quality Does Not Predict Memory Accuracy",
+    x = "Subjective Sleep Quality",
+    y = "Accuracy"
+  ) +
+  theme_minimal(base_size = 14, base_family = "ibm") +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_line(color = "gray85", linewidth = 0.5),
+    axis.line = element_blank(),
+    axis.ticks = element_blank(),
+    plot.title = element_text(hjust = 0, size = 22, face = 'bold', margin = margin(b = 10)),
+    legend.position = "bottom",
+    legend.title = element_text(face = 'bold', size = 13, colour = 'gray30'),
+    legend.text = element_text(size = 12),
+    axis.title.x = element_text(size = 16, colour = 'gray30'),
+    axis.title.y = element_text(size = 17, colour = 'gray30'),
+    axis.text = element_text(size = 13, colour = 'gray30'),
+    plot.margin = margin(t = 10, r = 15, b = 30, l = 10)
+  ) +
+  guides(
+    color = guide_legend(nrow = 1),
+    shape = guide_legend(nrow = 1)
+  )
+```
+
+### Key Takeaway {data-height="240"}
+
+```{r, echo=FALSE}
+htmltools::tags$div(
+  style = "background:#F0F4FF; border-left: 4px solid #1F3A6E; padding: 12px 16px; border-radius: 4px; font-family: 'IBM Plex Sans', sans-serif; font-size: 15px; color: #1C1C1E; margin-top: 12px;",
+  htmltools::tags$strong("The visualization included 15 data points (sessions) per subject. While participants varied in their previous night's sleep quality and memory performance for each session, this result shows that sleep didn't have a significant effect on memory performance.")
+)
+```
+
+## Column {.tabset data-width="350"}
+
+### About
+
+**Research Question:** Does memory performance differ based on how sleepy participants are? At the beginning of each session, participants rated their last night's sleep quality on a scale of 1 (very bad) to 5 (very good). 
+
+ 
+
+**Hypothesis:** Memory performance will decrease when subjects are sleepy.
+
+ 
+
+**Conclusion:** The overall correlation is not statistically significant (*r* = 0.16, *p* = 0.29), so we cannot conclude there's a reliable relationship. The data does not support our hypothesis that better sleep quality predicts higher accuracy, at least not in this small sample. Future data collection can help elucidate these relationships.
+
+ 
+
+```{r}
+# ── Descriptive statistics table: Sleep Quality ────────────────────────────────
+# Each row is one sleep rating level (1–5). N = number of sessions at that rating.
+# Min/Max are session-level values because binary trial-level data would give 0%/100% always.
+sleep_desc <- survey_accuracy %>%
+  group_by(sleep) %>%
+  summarise(
+    N    = n(),
+    Mean = mean(accuracy, na.rm = TRUE),
+    SD   = sd(accuracy, na.rm = TRUE),
+    Min  = min(accuracy, na.rm = TRUE),
+    Max  = max(accuracy, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Pearson correlation
+sleep_cor <- cor.test(survey_accuracy$sleep, survey_accuracy$accuracy)
+
+# Print table
+sleep_desc %>%
+  gt() %>%
+  tab_header(
+    title    = "Memory Accuracy by Sleep Quality",
+    subtitle = "Each row = one sleep level rating (across sessions and subjects)"
+  ) %>%
+  cols_label(
+    sleep = "Sleep Quality",
+    N     = "N (sessions)",
+    Mean  = "Mean Accuracy",
+    SD    = "SD",
+    Min   = "Min",
+    Max   = "Max"
+  ) %>%
+  fmt_percent(columns = c(Mean, SD, Min, Max), decimals = 1) %>%
+  tab_footnote(
+    footnote  = "Min/Max reflect subject-level session accuracy means.",
+    locations = cells_column_labels(columns = c(Min, Max))
+  ) %>% 
+  tab_style(
+    style     = cell_text(weight = "bold"),
+    locations = cells_column_labels()
+  ) %>%
+  opt_row_striping() %>%
+  opt_table_font(font = google_font("IBM Plex Sans"))
+```
+
+### Old Version 1
+
+```{r}
+# ── Deprecated: Old Version 1 ──────────────────────────────────────────────────
+# Discard because no group trend line. Different color palette
+
+subj_colors <- c("3" = "#5B8FCC", "4" = "#E8855A", "5" = "#5BAF8F")  # blue, orange, green
+
+ggplot(survey_accuracy, aes(x = sleep, y = accuracy, color = factor(subjId))) +
+  geom_point(size = 2.5, alpha = 0.8) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 1.2) +
+  scale_color_manual(
+    values = subj_colors,
+    labels = c("Participant 1", "Participant 2", "Participant 3")
+  ) +
+  scale_x_continuous(breaks = 1:5, limits = c(1, 5)) +
+  scale_y_continuous(
+    limits = c(0.7, 1),
+    labels = scales::percent_format(accuracy = 1)
+  ) +
+  labs(
+    title = "Accuracy by Sleep Quality",
+    x = "Sleep Quality",
+    y = "Accuracy",
+    color = NULL
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_line(color = "gray85", linewidth = 0.5),
+    axis.line = element_blank(),
+    axis.ticks = element_blank(),
+    plot.title = element_text(hjust = 0, size = 14, face = "bold", margin = margin(b = 10)),
+    legend.position = "bottom",
+    legend.text = element_text(size = 10),
+    axis.title = element_text(size = 11, color = "gray30"),
+    axis.text = element_text(size = 10, color = "gray30")
+  )
+```
+
+### Old Version 2
+
+```{r}
+# ── Deprecated: Old Version 2 ──────────────────────────────────────────────────
+# Adds Okabe-Ito palette and per-subject trend lines.
+# Discarded because truncated y-axis (0.7–1.0) makes lines more significant than they should be. 
+# Title overstated ("Aids Memory Accuracy")
+
+ggplot(survey_accuracy, aes(x = sleep, y = accuracy, color = factor(subjId))) +
+  geom_point(size = 2.5, alpha = 0.2) +
+  
+  
+  geom_smooth(method = "lm", se = FALSE, linewidth = 1.2) +
+  scale_color_manual(
+  values = c("3" = scales::alpha("#009E73", 0.7), 
+             "4" = scales::alpha("#0072B2", 0.7), 
+             "5" = scales::alpha("#CC79A7", 0.7)),
+  labels = c("Participant 1", "Participant 2", "Participant 3")
+) +
+  scale_x_continuous(breaks = 1:5, limits = c(1, 5)) +
+  scale_y_continuous(
+    limits = c(0.7, 1),
+    labels = scales::percent_format(accuracy = 1)
+  ) +
+  labs(
+    title = "Improved Sleep Quality Aids Memory Accuracy ",
+    x = "Sleep Quality",
+    y = "Memory Accuracy",
+    color = NULL
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_line(color = "gray85", linewidth = 0.5),
+    axis.line = element_blank(),
+    axis.ticks = element_blank(),
+    plot.title = element_text(hjust = 0, size = 14, face = "bold", margin = margin(b = 10)),
+    legend.position = "bottom",
+    legend.text = element_text(size = 10),
+    axis.title = element_text(size = 11, color = "gray30"),
+    axis.text = element_text(size = 10, color = "gray30")
+  )
+```
+
+### Old Version 3
+
+```{r}
+# ── Deprecated: Old Version 3 ──────────────────────────────────────────────────
+# Adds pooled group trend line and widens y-axis to 0.5. Title corrected. 
+# Needed improvement because it didn't carry session information.
+
+ggplot(survey_accuracy, aes(x = sleep, y = accuracy, color = factor(subjId))) +
+  geom_point(size = 2.5, alpha = 0.2) +
+  
+  # group average line
+  geom_smooth(inherit.aes = FALSE,
+              aes(x = sleep, y = accuracy),
+              method = "lm", se = TRUE,
+              color = "gray20", fill = "gray80",
+              linewidth = 1.2, linetype = "longdash", alpha = 0.5) +
+  
+  geom_smooth(method = "lm", se = FALSE, linewidth = 1.2) +
+  scale_color_manual(
+  values = c("3" = scales::alpha("#009E73", 0.7), 
+             "4" = scales::alpha("#0072B2", 0.7), 
+             "5" = scales::alpha("#CC79A7", 0.7)),
+  labels = c("Participant 1", "Participant 2", "Participant 3")
+) +
+  scale_x_continuous(breaks = 1:5, limits = c(1, 5)) +
+  scale_y_continuous(
+    limits = c(0.5, 1),
+    labels = scales::percent_format(accuracy = 1)
+  ) +
+  labs(
+    title = "Improved Sleep Quality Minimally\nAids Memory Accuracy ",
+    x = "Subjective Sleep Quality",
+    y = "Accuracy",
+    color = NULL
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_line(color = "gray85", linewidth = 0.5),
+    axis.line = element_blank(),
+    axis.ticks = element_blank(),
+    plot.title = element_text(hjust = 0, size = 22, face = 'bold', margin = margin(b = 10)),
+    plot.subtitle = element_text(hjust = 0, size = 12, color = 'gray50', margin = margin(b = 15)),
+    legend.position = "bottom",
+    legend.title= element_text(face = 'bold', size = 13, colour = 'gray30'),
+    legend.text = element_text(size = 12),
+    axis.title.x= element_text(size = 16, colour = 'gray30'),
+    axis.title.y = element_text(size = 17, colour = 'gray30'),
+    axis.text = element_text(size = 13, colour = 'gray30')
+  )
+```
+
+# Accuracy vs. Voice
+
+## Column {data-width="650"}
+
+### Final Version {data-height="760"}
+
+```{r voiceSetup}
+# ── Constants ──────────────────────────────────────────────────────────────────
+# Defined once here and reused across all voice-tab chunks to avoid
+# redefinition errors and make future label/palette changes a single edit.
+VOICE_LEVELS <- c("nova", "echo", "onyx", "shimmer")
+VOICE_LABELS <- c("Nova", "Echo", "Onyx", "Shimmer")
+
+# Old jewel-tone palette — retained for reference in old version chunks.
+# Replaced by CVD-safe VOICE_PAL in the final version.
+VOICE_PAL_old <- c(
+  nova    = "#7B2D8B",  # amethyst purple
+  echo    = "#C0392B",  # ruby red
+  onyx    = "#1A6B8A",  # sapphire blue
+  shimmer = "#D4A017"   # golden amber
+)
+
+# ── Data preparation ───────────────────────────────────────────────────────────
+df_voice <- raw_df %>%
+  filter(!is.na(recog), !is.na(correct_resp), !is.na(voice)) %>% # filter to complete cases
+  mutate(
+    correct = as.integer(as.character(correct_resp) == as.character(recog)),
+    voice   = factor(voice, levels = VOICE_LEVELS)
+  )
+
+# subj_acc: one accuracy value per subject × voice 
+subj_acc <- df_voice %>%
+  group_by(subjId, voice) %>%
+  summarise(accuracy = mean(correct), .groups = "drop")
+
+# group_acc: mean ± SE per voice collapsed across subjects (for bar height and error bars)
+group_acc <- df_voice %>%
+  group_by(voice) %>%
+  summarise(
+    mean_acc = mean(correct),
+    se_acc   = sd(correct) / sqrt(n()),
+    .groups  = "drop"
+  )
+```
+
+```{r fig.width=10, fig.height=6}
+# CVD-safe palette: Okabe-Ito
+VOICE_PAL <- c(
+  nova    = "#0072B2",  # deep blue
+  echo    = "#E69F00",  # orange
+  onyx    = "#009E73",  # teal-green
+  shimmer = "#CC79A7"   # pink-purple
+)
+
+# Define shapes
+subj_shapes  <- c("3" = 15, "4" = 17, "5" = 16)  # square, triangle, circle
+
+# ── Subject-level accuracy with x-offsets ──────────────────────────────────────
+subj_acc <- df_voice %>%
+  group_by(subjId, voice) %>%
+  summarise(accuracy = mean(correct), .groups = "drop") %>%
+  group_by(voice) %>%
+  # x_offset staggers the 3 subject points within each voice bar so they don't
+  # overlap each other or the error bar
+  mutate(x_offset = (row_number() - 2) * 0.12) %>%
+  ungroup() %>%
+  mutate(subjId = factor(subjId))
+
+# ── Plot ───────────────────────────────────────────────────────────────────────
+ggplot(group_acc, aes(x = voice, y = mean_acc, fill = voice)) +
+  
+  # geom_linerange chosen over geom_col so the y-axis can start at 0.5 (chance level)
+  # while bars visually originate from chance.
+  geom_linerange(
+    aes(x = voice, ymin = 0.5, ymax = mean_acc, colour = voice),
+    linewidth = 30, alpha = 0.60 # Make bars more transparent so readers can see participant 2 more clearly
+  ) +
+  
+  # Individual subject points overlaid with deterministic x-offsets
+  geom_point(
+    data = subj_acc,
+    aes(x = as.numeric(voice) + x_offset, y = accuracy,
+        color = voice, shape = subjId),
+    size = 5.5, alpha = 1.0, stroke = 0.8
+  ) +
+  
+  # SE error bars
+  geom_errorbar(
+    aes(ymin = mean_acc - se_acc, ymax = mean_acc + se_acc),
+    width = 0.15, linewidth = 0.8, color = "gray30"
+  ) +
+  scale_fill_manual(values = VOICE_PAL, guide = "none") +
+  scale_color_manual(values = VOICE_PAL, guide = "none") +
+  scale_shape_manual(
+    values = subj_shapes,
+    name   = "Participant",
+    labels = c("3" = "1", "4" = "2", "5" = "3")
+  ) +
+  scale_x_discrete(labels = VOICE_LABELS) +
+  scale_y_continuous(
+  limits = c(0.5, 1.05), breaks = seq(0.5, 1, 0.1),
+  labels = function(x) paste0(round(x * 100), "%"),
+  expand = c(0, 0)
+  ) +
+  labs(
+    title    = "Voice Type Does Not Affect Memory Accuracy",
+    x = "Voice", y = "Accuracy"
+  ) +
+  guides(
+    shape = guide_legend(
+      order = 1,
+      override.aes = list(colour = "grey40", size = 4, alpha = 1)
+    )
+  ) +
+  theme_minimal(base_size = 14, base_family = "ibm") +
+  theme(
+    plot.background    = element_rect(fill = "white", colour = NA),
+    panel.background   = element_rect(fill = "white", colour = NA),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.y = element_line(color = "gray85", linewidth = 0.5),
+    axis.ticks         = element_blank(),
+    plot.title         = element_text(hjust = 0, size = 22, face = "bold", margin = margin(b = 10)),
+    plot.subtitle      = element_text(hjust = 0, size = 12, color = "gray50", margin = margin(b = 15)),
+    legend.position    = "bottom",
+    legend.title       = element_text(face = "bold", size = 13, colour = "gray30"),
+    legend.text        = element_text(size = 12),
+    axis.title.x       = element_text(size = 16, colour = "gray30"),
+    axis.title.y       = element_text(size = 17, colour = "gray30"),
+    axis.text          = element_text(size = 13, colour = "gray30"),
+    plot.margin        = margin(t = 10, r = 15, b = 30, l = 10)
+  )
+```
+
+### Key Takeaway {data-height="240"}
+
+```{r, echo=FALSE}
+htmltools::tags$div(
+  style = "background:#F0F4FF; border-left: 4px solid #1F3A6E; padding: 12px 16px; border-radius: 4px; font-family: 'IBM Plex Sans', sans-serif; font-size: 15px; color: #1C1C1E; margin-top: 12px;",
+  htmltools::tags$strong("Four AI-generated voice types varying in gender and pitch were used to predict word-image pairs during encoding (learning). Participants’ memory was not affected by who spoke the word. This means that the encoding process is more robust regardless of voice type.")
+)
+```
+
+## Column {.tabset data-width="350"}
+
+### About
+
+**Research Question:** Does pitch or gender of voice affect how we remember pairings?
+
+ 
+
+**Hypothesis:** Voice type will not affect memory performance, and this will remain consistent across sessions.
+
+ 
+
+**Conclusion:** Voice type does not meaningfully affect memory accuracy. All four voices (Nova, Echo, Onyx, Shimmer) cluster tightly between 86–91%, with overlapping error bars suggesting no reliable differences. Participant 2 (triangles) shows consistently lower accuracy across all voices, indicating individual differences outweigh any voice type effect.
+
+ 
+
+```{r voiceDesc}
+# ── Descriptive statistics table: Voice Type ──────────────────────────────────
+# Trial counts at the trial level (total N heard per voice across all sessions)
+trial_counts <- df_voice %>%
+  group_by(voice) %>%
+  summarise(Trials = n(), .groups = "drop")
+
+# Subject-level mean accuracy per voice (avoids 0%/100% Min/Max from binary trials)
+subj_voice_acc <- df_voice %>%
+  group_by(subjId, voice) %>%
+  summarise(subj_acc = mean(correct), .groups = "drop")
+
+# Summarise across subjects, join trial counts, apply display labels
+desc_voice <- subj_voice_acc %>%
+  group_by(voice) %>%
+  summarise(
+    Mean = mean(subj_acc),
+    SD   = sd(subj_acc),
+    Min  = min(subj_acc),
+    Max  = max(subj_acc),
+    .groups = "drop"
+  ) %>%
+  left_join(trial_counts, by = "voice") %>%
+  select(voice, Trials, Mean, SD, Min, Max) %>%
+  mutate(voice = factor(voice, levels = VOICE_LEVELS, labels = VOICE_LABELS))
+
+desc_voice %>%
+  gt() %>%
+  tab_header(
+    title    = "Memory Accuracy by Voice Type",
+    subtitle = "Each row = one voice type (across sessions and subjects)"
+  ) %>%
+  cols_label(
+    voice  = "Voice",
+    Trials = "N (trials)",
+    Mean   = "Mean Accuracy",
+    SD     = "SD",
+    Min    = "Min",
+    Max    = "Max"
+  ) %>%
+  fmt_percent(columns = c(Mean, SD, Min, Max), decimals = 1) %>%
+  tab_footnote(
+    footnote = "Min/Max reflect subject-level accuracy means.",
+    locations = cells_column_labels(columns = c(Min, Max))
+  ) %>%
+  tab_style(
+    style     = cell_text(weight = "bold"),
+    locations = cells_column_labels()
+  ) %>%
+  opt_row_striping() %>%
+  opt_table_font(font = google_font("IBM Plex Sans"))
+```
+
+### Old Version 1
+
+```{r v1}
+# ── Deprecated: Old Version 1 ──────────────────────────────────────────────────
+# Uses geom_col() (bars from 0%), VOICE_PAL_old, and jittered points
+
+ggplot(group_acc, aes(x = voice, y = mean_acc, fill = voice)) +
+  geom_hline(yintercept = 0.5, linetype = "dotted", color = "gray60", linewidth = 0.7) +
+  annotate("text", x = 0.55, y = 0.515, label = "chance", size = 3.5, color = "gray50", hjust = 0) +
+  geom_col(width = 0.55, alpha = 0.85) +
+  geom_point(
+    data = subj_acc,
+    aes(x = voice, y = accuracy, color = voice),
+    position = position_jitter(width = 0.1, seed = 7),
+    size = 3.5, alpha = 0.7, shape = 16
+  ) +
+  geom_errorbar(
+    aes(ymin = mean_acc - se_acc, ymax = mean_acc + se_acc),
+    width = 0.15, linewidth = 0.8, color = "gray30"
+  ) +
+  scale_fill_manual(values = VOICE_PAL_old, guide = "none") +
+  scale_color_manual(values = VOICE_PAL_old, guide = "none") +
+  scale_x_discrete(labels = VOICE_LABELS) +
+  scale_y_continuous(
+    limits = c(0, 1.05), breaks = seq(0, 1, 0.25),
+    labels = function(x) paste0(round(x * 100), "%"),
+    expand = c(0, 0)
+  ) +
+  labs(
+    title = "Voice Type Does Not\nAffect Memory",
+    subtitle = "Mean accuracy ± SE · dots = individual subjects",
+    x = "Voice", y = "Accuracy"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.background    = element_rect(fill = "white", colour = NA),
+    panel.background   = element_rect(fill = "white", colour = NA),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.y = element_line(color = "gray85", linewidth = 0.5),
+    axis.line          = element_blank(),
+    axis.ticks         = element_blank(),
+    plot.title         = element_text(hjust = 0, size = 22, face = "bold", margin = margin(b = 10)),
+    plot.subtitle      = element_text(hjust = 0, size = 12, color = "gray50", margin = margin(b = 15)),
+    axis.title.x       = element_text(size = 16, colour = "gray30"),
+    axis.title.y       = element_text(size = 17, colour = "gray30"),
+    axis.text          = element_text(size = 13, colour = "gray30"),
+    plot.margin        = margin(t = 10, r = 15, b = 30, l = 10)
+  )
+```
+
+### Old Version 2
+
+```{r v2}
+# ── Deprecated: Old Version 2 ──────────────────────────────────────────────────
+# Introduces fixed x-offsets for subject points
+
+# make them all offsets the same
+subj_acc <- subj_acc %>%
+  group_by(voice) %>%
+  mutate(x_offset = (row_number() - 2) * 0.12) %>%  # always: -0.12, 0, +0.12
+  ungroup()
+
+# plot
+ggplot(group_acc, aes(x = voice, y = mean_acc, fill = voice)) +
+  geom_hline(yintercept = 0.5, linetype = "dotted", color = "gray60", linewidth = 0.7) +
+  annotate("text", x = 0.55, y = 0.515, label = "chance", size = 3.5, color = "gray50", hjust = 0) +
+  geom_col(width = 0.55, alpha = 0.85) +
+  geom_point(
+  data = subj_acc,
+  aes(x = as.numeric(voice) + x_offset, y = accuracy, color = voice),
+  size = 5.5, alpha = 0.7, shape = 16
+  ) +
+  geom_errorbar(
+    aes(ymin = mean_acc - se_acc, ymax = mean_acc + se_acc),
+    width = 0.15, linewidth = 0.8, color = "gray30"
+  ) +
+  scale_fill_manual(values = VOICE_PAL_old, guide = "none") +
+  scale_color_manual(values = VOICE_PAL_old, guide = "none") +
+  scale_x_discrete(labels = VOICE_LABELS) +
+  scale_y_continuous(
+    limits = c(0, 1.05), breaks = seq(0, 1, 0.25),
+    labels = function(x) paste0(round(x * 100), "%"),
+    expand = c(0, 0)
+  ) +
+  labs(
+    title = "Voice Type Does Not\nAffect Memory",
+    subtitle = "Mean accuracy ± SE · dots = individual subjects",
+    x = "Voice", y = "Accuracy"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.background    = element_rect(fill = "white", colour = NA),
+    panel.background   = element_rect(fill = "white", colour = NA),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.y = element_line(color = "gray85", linewidth = 0.5),
+    axis.line          = element_blank(),
+    axis.ticks         = element_blank(),
+    plot.title         = element_text(hjust = 0, size = 22, face = "bold", margin = margin(b = 10)),
+    plot.subtitle      = element_text(hjust = 0, size = 12, color = "gray50", margin = margin(b = 15)),
+    axis.title.x       = element_text(size = 16, colour = "gray30"),
+    axis.title.y       = element_text(size = 17, colour = "gray30"),
+    axis.text          = element_text(size = 13, colour = "gray30"),
+    plot.margin        = margin(t = 10, r = 15, b = 30, l = 10)
+  )
+```
+
+### Old Version 3
+
+```{r v3}
+# ── Deprecated: Old Version 3 ──────────────────────────────────────────────────
+# Adds per-subject shape
+
+# Define shapes
+subj_shapes  <- c("3" = 15, "4" = 17, "5" = 16)  # square, triangle, circle
+
+# Add x_offset AND shape column to subj_acc
+subj_acc <- df_voice %>%
+  group_by(subjId, voice) %>%
+  summarise(accuracy = mean(correct), .groups = "drop") %>%
+  group_by(voice) %>%
+  mutate(x_offset = (row_number() - 2) * 0.12) %>%
+  ungroup() %>%
+  mutate(subjId = factor(subjId))
+
+# ── Plot ───────────────────────────────────────────────────────────────────────
+ggplot(group_acc, aes(x = voice, y = mean_acc, fill = voice)) +
+  geom_hline(yintercept = 0.5, linetype = "dotted", color = "gray60", linewidth = 0.7) +
+  annotate("text", x = 0.55, y = 0.515, label = "chance", size = 3.5, color = "gray50", hjust = 0) +
+  geom_col(width = 0.55, alpha = 0.85) +
+  geom_point(
+    data = subj_acc,
+    aes(x = as.numeric(voice) + x_offset, y = accuracy,
+        color = voice, shape = subjId),
+    size = 5.5, alpha = 0.7, stroke = 0.8
+  ) +
+  geom_errorbar(
+    aes(ymin = mean_acc - se_acc, ymax = mean_acc + se_acc),
+    width = 0.15, linewidth = 0.8, color = "gray30"
+  ) +
+  scale_fill_manual(values = VOICE_PAL_old, guide = "none") +
+  scale_color_manual(values = VOICE_PAL_old, guide = "none") +
+  scale_shape_manual(
+    values = subj_shapes,
+    name   = "Participant",
+    labels = c("3" = "1", "4" = "2", "5" = "3")
+  ) +
+  scale_x_discrete(labels = VOICE_LABELS) +
+  scale_y_continuous(
+    limits = c(0, 1.05), breaks = seq(0, 1, 0.25),
+    labels = function(x) paste0(round(x * 100), "%"),
+    expand = c(0, 0)
+  ) +
+  labs(
+    title = "Voice Type Does Not\nAffect Memory",
+    subtitle = "Mean accuracy ± SE (shapes = individual subjects)",
+    x = "Voice", y = "Accuracy"
+  ) +
+  guides(
+    shape = guide_legend(
+      order = 1,
+      override.aes = list(colour = "grey40", size = 4, alpha = 1)
+    )
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.background    = element_rect(fill = "white", colour = NA),
+    panel.background   = element_rect(fill = "white", colour = NA),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.y = element_line(color = "gray85", linewidth = 0.5),
+    axis.ticks         = element_blank(),
+    plot.title         = element_text(hjust = 0, size = 22, face = "bold", margin = margin(b = 10)),
+    plot.subtitle      = element_text(hjust = 0, size = 12, color = "gray50", margin = margin(b = 15)),
+    legend.position    = "bottom",
+    legend.title       = element_text(face = "bold", size = 13, colour = "gray30"),
+    legend.text        = element_text(size = 12),
+    axis.title.x       = element_text(size = 16, colour = "gray30"),
+    axis.title.y       = element_text(size = 17, colour = "gray30"),
+    axis.text          = element_text(size = 13, colour = "gray30"),
+    plot.margin        = margin(t = 10, r = 15, b = 30, l = 10)
+  )
+```
+
+### Old Version 4
+
+```{r v4}
+# ── Deprecated: Old Version 4 ──────────────────────────────────────────────────
+# Switches to geom_linerange() and VOICE_PAL (Okabe-Ito). 
+# Discarded because participant 2's shapes are always not too visible. This is adjusted in the final version.
+
+# Add x_offset AND shape column to subj_acc
+subj_acc <- df_voice %>%
+  group_by(subjId, voice) %>%
+  summarise(accuracy = mean(correct), .groups = "drop") %>%
+  group_by(voice) %>%
+  mutate(x_offset = (row_number() - 2) * 0.12) %>%
+  ungroup() %>%
+  mutate(subjId = factor(subjId))
+
+# ── Plot ───────────────────────────────────────────────────────────────────────
+ggplot(group_acc, aes(x = voice, y = mean_acc, fill = voice)) +
+  #geom_hline(yintercept = 0.5, linetype = "dotted", color = "gray60", linewidth = 0.7) +
+  #annotate("text", x = 0.55, y = 0.515, label = "chance", size = 3.5, color = "gray50", hjust = 0) +
+  geom_linerange(
+    aes(x = voice, ymin = 0.5, ymax = mean_acc, colour = voice),
+    linewidth = 30, alpha = 0.85
+  ) +
+  geom_point(
+    data = subj_acc,
+    aes(x = as.numeric(voice) + x_offset, y = accuracy,
+        color = voice, shape = subjId),
+    size = 5.5, alpha = 0.7, stroke = 0.8
+  ) +
+  geom_errorbar(
+    aes(ymin = mean_acc - se_acc, ymax = mean_acc + se_acc),
+    width = 0.15, linewidth = 0.8, color = "gray30"
+  ) +
+  scale_fill_manual(values = VOICE_PAL, guide = "none") +
+  scale_color_manual(values = VOICE_PAL, guide = "none") +
+  scale_shape_manual(
+    values = subj_shapes,
+    name   = "Participant",
+    labels = c("3" = "1", "4" = "2", "5" = "3")
+  ) +
+  scale_x_discrete(labels = VOICE_LABELS) +
+  scale_y_continuous(
+  limits = c(0.5, 1.05), breaks = seq(0.5, 1, 0.1),
+  labels = function(x) paste0(round(x * 100), "%"),
+  expand = c(0, 0)
+  ) +
+  labs(
+    title    = "Voice Type Does Not\nAffect Memory Accuracy",
+    # subtitle = "Mean accuracy ± SE (shapes = individual subjects)",
+    x = "Voice", y = "Accuracy"
+  ) +
+  guides(
+    shape = guide_legend(
+      order = 1,
+      override.aes = list(colour = "grey40", size = 4, alpha = 1)
+    )
+  ) +
+  theme_minimal(base_size = 14, base_family = "ibm") +
+  theme(
+    plot.background    = element_rect(fill = "white", colour = NA),
+    panel.background   = element_rect(fill = "white", colour = NA),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.y = element_line(color = "gray85", linewidth = 0.5),
+    axis.ticks         = element_blank(),
+    plot.title         = element_text(hjust = 0, size = 22, face = "bold", margin = margin(b = 10)),
+    plot.subtitle      = element_text(hjust = 0, size = 12, color = "gray50", margin = margin(b = 15)),
+    legend.position    = "bottom",
+    legend.title       = element_text(face = "bold", size = 13, colour = "gray30"),
+    legend.text        = element_text(size = 12),
+    axis.title.x       = element_text(size = 16, colour = "gray30"),
+    axis.title.y       = element_text(size = 17, colour = "gray30"),
+    axis.text          = element_text(size = 13, colour = "gray30"),
+    plot.margin        = margin(t = 10, r = 15, b = 30, l = 10)
+  )
+```
